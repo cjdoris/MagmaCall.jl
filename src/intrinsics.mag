@@ -1,0 +1,14 @@
+intrinsic __jl_display(x)
+    {Display x Julia-style.}
+    x;
+end intrinsic;
+
+intrinsic __jl_display(x::MonStgElt)
+    {"}
+    x:Magma;
+end intrinsic;
+
+intrinsic __jl_display(x::Intrinsic)
+    {"}
+    x:Magma;
+end intrinsic;

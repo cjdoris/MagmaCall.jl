@@ -1,0 +1,7 @@
+name = "MagmaCall"
+uuid = "bbc12448-813b-4029-aa6c-5ca2c038c8b3"
+authors = ["Christopher Doris <github.com/cjdoris>"]
+version = "0.1.0"
+
+[deps]
+Random = "9a3f8284-a2c9-5f02-9a11-845980a1fd5c"
