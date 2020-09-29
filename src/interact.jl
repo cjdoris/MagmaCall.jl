@@ -19,14 +19,18 @@ function __init__()
         RUNNING[] = false
         kill(PROC[])
     end
+    magotp_start()
 end
 
+interact_start() = (take!(GIL); PROC[])
+interact_stop() = (put!(GIL, nothing); nothing)
+
 @inline function interact(f)
-    take!(GIL)
+    p = interact_start()
     try
-        return f(PROC[])
+        return f(p)
     finally
-        put!(GIL, nothing)
+        interact_stop()
     end
 end
 

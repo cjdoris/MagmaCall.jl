@@ -2,6 +2,20 @@ struct MagmaRuntimeError <: Exception
     e :: MagmaObject
 end
 
+function Base.showerror(io::IO, e::MagmaRuntimeError)
+    print(io, "Magma: ")
+    interact() do p
+        putcmd(p, "__jl_showerror(", valstr(e.e), ")")
+        n = 0
+        for line in eachlinetotoken(p, missing)
+            n += 1
+            n == 1 || println(io)
+            print(io, line)
+        end
+        checkerr(p)
+    end
+end
+
 """
     magassigned(o::MagmaObject)
 
@@ -31,6 +45,11 @@ export magdelete
 # binary relations
 for op in [:eq, :ne, :cmpeq, :cmpne, :le, :lt, :ge, :gt, :in, :notin, :adj, :notadj, :subset, :notsubset]
     jop = Symbol(:mag, op)
+    doc = """
+        $jop(x, y)
+
+    True if `x $op y` in Magma.
+    """
     @eval function $jop(_x, _y)
         x = MagmaValue(_x)
         y = MagmaValue(_y)
@@ -43,11 +62,17 @@ for op in [:eq, :ne, :cmpeq, :cmpne, :le, :lt, :ge, :gt, :in, :notin, :adj, :not
             readtotoken(Bool, p, missing)
         end
     end
+    @eval @doc $doc $jop
     @eval export $jop
 end
 
 # binary operators
-for (op,jop) in [(:diff, :magdiff), (:div, :magdiv), (:join, :magjoin), (:meet, :magmeet), (:mod, :magmod), (:sdiff, :magsdiff), (:+, :magadd), (:-, :magsub), (:*, :magmul), (:/, :magtruediv), (:^, :magpow)]
+for (op,jop) in [("diff", :magdiff), ("div", :magdiv), ("join", :magjoin), ("meet", :magmeet), ("mod", :magmod), ("sdiff", :magsdiff), ("cat", :magcat), ("+", :magadd), ("-", :magsub), ("*", :magmul), ("/", :magtruediv), ("^", :magpow)]
+    doc = """
+        $jop(x, y)
+
+    Equivalent to `x $op y` in Magma.
+    """
     @eval function $jop(_x, _y)
         x = MagmaValue(_x)
         y = MagmaValue(_y)
@@ -59,11 +84,40 @@ for (op,jop) in [(:diff, :magdiff), (:div, :magdiv), (:join, :magjoin), (:meet, 
         end
         r
     end
+    @eval @doc $doc $jop
+    @eval export $jop
+end
+
+# unary operators
+for (op,jop) in [("+", :magpos), ("-", :magneg), ("&+", :magsum), ("&*", :magprod), ("&and", :magreduceand), ("&or", :magreduceor), ("&join", :magreducejoin), ("&meet", :magreducemeet), ("&cat", :magreducecat)]
+    doc = """
+        $jop(x)
+
+    Equivalent to `$op x` in Magma.
+    """
+    @eval function $jop(_x)
+        x = MagmaValue(_x)
+        r = MagmaObject()
+        GC.@preserve x interact() do p
+            putcmd(p, varname(r), " := ", $op, "(", valstr(x), ")", err=true)
+            echototoken(p, missing)
+            checkerr(p)
+        end
+        r
+    end
+    @eval @doc $doc $jop
     @eval export $jop
 end
 
 # containers without universe
-for (a, b, jop) in [("[*", "*]", :maglist), ("<", ">", :magtuple)]
+for (a, b, jop, what) in [("[*", "*]", :maglist, "list"), ("<", ">", :magtuple, "tuple")]
+    doc = """
+        $jop([xs])
+
+    A new Magma $what, equivalent to `$a $b`.
+
+    Optionally, values can be specified with iterable `xs`.
+    """
     @eval function $jop(_xs=())
         xs = _xs isa Tuple ? map(MagmaValue, _xs) : [MagmaValue(x) for x in _xs]
         xv = join(map(valstr, xs), ", ")
@@ -75,34 +129,48 @@ for (a, b, jop) in [("[*", "*]", :maglist), ("<", ">", :magtuple)]
         end
         r
     end
+    @eval @doc $doc $jop
     @eval export $jop
 end
 
 # containers with universe
-for (a, b, jop, add) in [("[", "]", :magseq, "Append"), ("{", "}", :magset, "Include"), ("{*", "*}", :magmset, "Include"), ("{@", "@}", :magiset, "Include")]
+for (a, b, jop, add, what, rangeok) in [("[", "]", :magseq, "Append", "sequence", true), ("{", "}", :magset, "Include", "set", true), ("{*", "*}", :magmset, "Include", "multiset", false), ("{@", "@}", :magiset, "Include", "indexed set", false)]
+    doc = """
+        $jop([xs]; [universe])
+
+    A new Magma $what, equivalent to `$a universe | $b`.
+
+    Optionally, values can be specified with iterable `xs`.
+    """
     @eval function $jop(_xs=(); universe=nothing)
         r = MagmaObject()
         if _xs===()
-            xs = ()
-            av = ""
+            xs = nothing
+            ev = pv = ""
+        elseif $rangeok && _xs isa AbstractUnitRange{<:Integer}
+            xs = nothing
+            ev = "$(magliteralstr(first(_xs))) .. $(magliteralstr(last(_xs))) by $(magliteralstr(step(_xs))) "
+            pv = ""
         else
             xs = maglist(_xs)
-            av = string(";\nfor x in ", valstr(xs), " do\n", $add, "(~", varname(r), ", x);\nend for")
+            pv = string(";\nfor x in ", valstr(xs), " do\n", $add, "(~", varname(r), ", x);\nend for")
+            ev = ""
         end
         if universe===nothing
             u = nothing
             uv = ""
         else
             u = MagmaValue(universe)
-            uv = string(valstr(u), " | ")
+            uv = string(";\nChangeUniverse(~", varname(r), ", ", valstr(u), ")")
         end
         GC.@preserve xs u interact() do p
-            putcmd(p, varname(r), " := ", $a, uv, $b, av, err=true)
+            putcmd(p, varname(r), " := ", $a, " ", ev, " ", $b, pv, uv, err=true)
             readtotoken(Nothing, p, missing)
             checkerr(p)
         end
         r
     end
+    @eval @doc $doc $jop
     @eval export $jop
 end
 
@@ -133,146 +201,255 @@ end
 export magprint
 
 """
-    magcall(Val(N), f, args...; opts...)
+    magsprint(x, level=:default)
 
-Call the Magma function `f` with the given arguments and keyword options.
-
-If `N==0` then `f` is called as an intrinsic and nothing is returned.
-
-Otherwise, `f` is called as a function with `N` return values. If `N==1`, the single return value is returned, otherwise a tuple is returned.
+String representation of `x` at the given `level` (see [`magprint`](@ref)).
 """
-function magcall(::Val{N}, _f, _args...; _opts...) where {N}
-    f = intrarg(_f)
-    args = map(MagmaValue, _args)
-    argsstr = join((argstr(arg) for arg in args), ", ")
-    if isempty(_opts)
-        opts = nothing
-        optsstr = ""
+magsprint(x, level::Symbol=:default) = sprint(magprint, x, level)
+export magsprint
+
+"""
+    magcall(Val(C), f, args...; opts...)
+
+Call the Magma function `f` with the given arguments and keyword options according to calling convention `C`.
+
+If `f` is a `Symbol`, then it is interpreted as the name of a Magma intrinsic.
+
+`C` may be:
+* `:p`: `f` is a procedure and `nothing` is returned. Note that if `f` is actually a function, its return value will be printed.
+* `:f`: `f` is a function and its first return value is returned.
+* `:fN`: `f` is a function and its first `N` return values are returned as a tuple.
+* `:b`: `f` is a function returning a boolean, which is returned as a `Bool`.
+* `:i`: `f` is a function returning an integer, which is returned as an `Int`.
+* `:g`: `f` is a function returning a structure `S`. `args[1]` is a tuple of generator names, which are applied to `S`. Returns a tuple of `S` and generator names.
+* `:pN`: Same as `:p` (procedure) but the `N`th argument is passed by reference.
+
+Equivalently, you can call `magcallC(f, args...; opts...)` or `magC.f(args...; opts...)`.
+"""
+function magcall(::Val{C}, _f, _args...; _opts...) where {C}
+    if C in (:p, :f, :f2, :f3, :f4, :f5, :f6, :f7, :f8)
+        N = C==:p ? 0 : C==:f ? 1 : C==:f2 ? 2 : C==:f3 ? 3 : C==:f4 ? 4 : C==:f5 ? 5 : C==:f6 ? 6 : C==:f7 ? 7 : C==:f8 ? 8 : error()
+        f = intrarg(_f)
+        args = map(MagmaValue, _args)
+        argsstr = join((argstr(arg) for arg in args), ", ")
+        if isempty(_opts)
+            opts = nothing
+            optsstr = ""
+        else
+            opts = Dict(k=>MagmaValue(v) for (k,v) in _opts)
+            optsstr = string(" : ", join(("$k:=$(valstr(v))" for (k,v) in opts), ", "))
+        end
+        rs = ntuple(i->MagmaObject(), Val(N))
+        lhs = N==0 ? "" : string(join(map(varname, rs), ", "), " := ")
+        GC.@preserve f args opts interact() do p
+            putcmd(p, lhs, valstr(f), "(", argsstr, optsstr, ")", err=true)
+            echototoken(p, missing)
+            checkerr(p)
+        end
+        return N==0 ? nothing : N==1 ? rs[1] : rs
+    elseif C in (:i, :b)
+        T = C==:i ? Int : C==:b ? Bool : error()
+        r = magcall(Val(:f), _f, _args...; _opts...)
+        GC.@preserve r interact() do p
+            putcmd(p, varname(r), err=true)
+            v = readtotoken(T, p, missing)
+            checkerr(p)
+            v
+        end
+    elseif C == :m
+        ok, r = magcall(Val(:f2), _f, _args...; _opts...)
+        magboolconvert(Bool, ok) ? r : nothing
     else
-        opts = Dict(k=>MagmaValue(v) for (k,v) in _opts)
-        optsstr = string(" : ", join(("$k:=$(valstr(v))" for (k,v) in opts), ", "))
-    end
-    rs = ntuple(i->MagmaObject(), Val(N))
-    lhs = N==0 ? "" : string(join(map(varname, rs), ", "), " := ")
-    GC.@preserve f args opts interact() do p
-        putcmd(p, lhs, valstr(f), "(", argsstr, optsstr, ")", err=true)
-        echototoken(p, missing)
-        checkerr(p)
-    end
-    N==0 ? nothing : N==1 ? rs[1] : rs
-end
-function magcall(::Type{T}, f, args...; opts...) where {T}
-    r = magcall(Val(1), f, args...; opts...)
-    GC.@preserve r interact() do p
-        putcmd(p, varname(r), err=true)
-        v = readtotoken(T, p, missing)
-        checkerr(p)
-        v
+        error("Invalid magcall calling convention: $(repr(C))")
     end
 end
 export magcall
+const CALLING_CONVENTIONS = (:p, :f, :f2, :f3, :f4, :f5, :f6, :f7, :f8, :b, :i, :g, :p1, :p2, :p3, :p4, :m)
 
 """
     magcallp(f, args...; opts...)
 
 Call the Magma procedure `f` with the given arguments and keyword options.
+
+Equivalent to `magcall(Val(:p), f, args...; opts...)`.
 """
-magcallp(f, args...; opts...) = magcall(Val(0), f, args...; opts...)
+magcallp(f, args...; opts...) = magcall(Val(:p), f, args...; opts...)
 export magcallp
 
 """
     magcallf(f, args...; opts...)
 
 Call the Magma function `f` with the given arguments and keyword options. Return the first return value.
+
+Equivalent to `magcall(Val(:f), f, args...; opts...)`.
 """
-magcallf(f, args...; opts...) = magcall(Val(1), f, args...; opts...)
+magcallf(f, args...; opts...) = magcall(Val(:f), f, args...; opts...)
 export magcallf
 
 """
     magcallf2(f, args...; opts...)
 
 Call the Magma function `f` with the given arguments and keyword options. Return the first two return values.
+
+Equivalent to `magcall(Val(:f2), f, args...; opts...)`.
 """
-magcallf2(f, args...; opts...) = magcall(Val(2), f, args...; opts...)
+magcallf2(f, args...; opts...) = magcall(Val(:f2), f, args...; opts...)
 export magcallf2
 
 """
     magcallf3(f, args...; opts...)
 
 Call the Magma function `f` with the given arguments and keyword options. Return the first three return values.
+
+Equivalent to `magcall(Val(:f3), f, args...; opts...)`.
 """
-magcallf3(f, args...; opts...) = magcall(Val(3), f, args...; opts...)
+magcallf3(f, args...; opts...) = magcall(Val(:f3), f, args...; opts...)
 export magcallf3
 
 """
     magcallf4(f, args...; opts...)
 
 Call the Magma function `f` with the given arguments and keyword options. Return the first four return values.
+
+Equivalent to `magcall(Val(:f4), f, args...; opts...)`.
 """
-magcallf4(f, args...; opts...) = magcall(Val(4), f, args...; opts...)
+magcallf4(f, args...; opts...) = magcall(Val(:f4), f, args...; opts...)
 export magcallf4
 
 """
     magcallf5(f, args...; opts...)
 
 Call the Magma function `f` with the given arguments and keyword options. Return the first five return values.
+
+Equivalent to `magcall(Val(:f5), f, args...; opts...)`.
 """
-magcallf5(f, args...; opts...) = magcall(Val(5), f, args...; opts...)
+magcallf5(f, args...; opts...) = magcall(Val(:f5), f, args...; opts...)
 export magcallf5
 
 """
     magcallf6(f, args...; opts...)
 
 Call the Magma function `f` with the given arguments and keyword options. Return the first six return values.
+
+Equivalent to `magcall(Val(:f6), f, args...; opts...)`.
 """
-magcallf6(f, args...; opts...) = magcall(Val(6), f, args...; opts...)
+magcallf6(f, args...; opts...) = magcall(Val(:f6), f, args...; opts...)
 export magcallf6
 
 """
     magcallf7(f, args...; opts...)
 
 Call the Magma function `f` with the given arguments and keyword options. Return the first seven return values.
+
+Equivalent to `magcall(Val(:f7), f, args...; opts...)`.
 """
-magcallf7(f, args...; opts...) = magcall(Val(7), f, args...; opts...)
+magcallf7(f, args...; opts...) = magcall(Val(:f7), f, args...; opts...)
 export magcallf7
 
 """
     magcallf8(f, args...; opts...)
 
 Call the Magma function `f` with the given arguments and keyword options. Return the first eight return values.
+
+Equivalent to `magcall(Val(:f8), f, args...; opts...)`.
 """
-magcallf8(f, args...; opts...) = magcall(Val(8), f, args...; opts...)
+magcallf8(f, args...; opts...) = magcall(Val(:f8), f, args...; opts...)
 export magcallf8
 
 """
     magcalli(f, args...; opts...)
 
-Call the Magma function `f` with the given arguments and keyword options. It must return an integer, which is returned.
+Call the Magma function `f` with the given arguments and keyword options. It must return an integer, which is returned as an `Int`.
+
+Equivalent to `magcall(Val(:i), f, args...; opts...)`.
 """
-magcalli(f, args...; opts...) = magcall(Int, f, args...; opts...)
+magcalli(f, args...; opts...) = magcall(Val(:i), f, args...; opts...)
 export magcalli
 
 """
     magcallb(f, args...; opts...)
 
-Call the Magma function `f` with the given arguments and keyword options. It must return a boolean, which is returned.
+Call the Magma function `f` with the given arguments and keyword options. It must return a boolean, which is returned as a `Bool`.
+
+Equivalent to `magcall(Val(:b), f, args...; opts...)`.
 """
-magcallb(f, args...; opts...) = magcall(Bool, f, args...; opts...)
+magcallb(f, args...; opts...) = magcall(Val(:b), f, args...; opts...)
 export magcallb
 
 """
-    magcallg(names, f, args...; opts...)
+    magcallg(f, names, args...; opts...)
 
 Call the Magma function `f` with the given arguments and keyword options. Assign the given `names` to the result. Return a tuple of the result and the generators.
+
+Equivalent to `magcall(Val(:g), f, names, args...; opts...)`.
 """
-function magcallg(names::Tuple, f, args...; opts...)
+magcallg(f, args...; opts...) = magcall(Val(:g), f, args...; opts...)
+function magcall(::Val{:g}, f, _names::Union{Tuple,String,Symbol}, args...; opts...)
+    names = _names isa Union{String,Symbol} ? (_names,) : _names
     R = magcallf(f, args...; opts...)
     magcallp(:AssignNames, MagmaRef(R), magseq(map(x->x isa Symbol ? string(x) : x, names)))
     (R, ntuple(i->magcallf(:Name, R, i), length(names))...)
 end
-magcallg(name::Union{String,Symbol}, f, args...; opts...) =
-    magcallg((string(name),), f, args...; opts...)
 export magcallg
+
+"""
+    magcallp1(f, args...; opts...)
+
+Call the Magma procedure `f` with the given arguments and keyword options, passing the first
+argument by reference.
+
+Equivalent to `magcallp1(Val(:p1), args...; opts...)`.
+"""
+magcallp1(f, args...; opts...) = magcall(Val(:p1), f, args...; opts...)
+magcall(::Val{:p1}, f, arg1, args...; opts...) = magcallp(f, MagmaRef(arg1), args...; opts...)
+export magcallp1
+
+"""
+    magcallp2(f, args...; opts...)
+
+Call the Magma procedure `f` with the given arguments and keyword options, passing the second
+argument by reference.
+
+Equivalent to `magcallp2(Val(:p2), args...; opts...)`.
+"""
+magcallp2(f, args...; opts...) = magcall(Val(:p2), f, args...; opts...)
+magcall(::Val{:p2}, f, arg1, arg2, args...; opts...) = magcallp(f, arg1, MagmaRef(arg2), args...; opts...)
+export magcallp2
+
+"""
+    magcallp3(f, args...; opts...)
+
+Call the Magma procedure `f` with the given arguments and keyword options, passing the third
+argument by reference.
+
+Equivalent to `magcallp3(Val(:p3), args...; opts...)`.
+"""
+magcallp3(f, args...; opts...) = magcall(Val(:p3), f, args...; opts...)
+magcall(::Val{:p3}, f, arg1, arg2, arg3, args...; opts...) = magcallp(f, arg1, arg2, MagmaRef(arg3), args...; opts...)
+export magcallp3
+
+"""
+    magcallp4(f, args...; opts...)
+
+Call the Magma procedure `f` with the given arguments and keyword options, passing the fourth
+argument by reference.
+
+Equivalent to `magcallp4(Val(:p4), args...; opts...)`.
+"""
+magcallp4(f, args...; opts...) = magcall(Val(:p4), f, args...; opts...)
+magcall(::Val{:p4}, f, arg1, arg2, arg3, arg4, args...; opts...) = magcallp(f, arg1, arg2, arg3, MagmaRef(arg4), args...; opts...)
+export magcallp4
+
+"""
+    magcallm(f, args...; opts...)
+
+Call the Magma function `f` with the given arguments and keyword options. If the first
+return value is true, return the second return value, else return `nothing`.
+
+Equivalent to `magcall(Val(:m), args...; opts...)`.
+"""
+magcallm(f, args...; opts...) = magcall(Val(:m), f, args...; opts...)
+export magcallm
 
 """
     maggetindex(o, i, ...)
@@ -395,13 +572,19 @@ end
 export mageval
 
 """
-    mag"..."
+    mag"..."[C]
 
 Evaluates the given string as a Magma expression.
 
 Julia values may be interpolated with `\$` as usual.
+
+If `C` is given, the returned value is wrapped as a `MagmaCallable{C}`, for example:
+```
+f = mag"func<x, y | x^2 + 3*x*y + y^2>"f
+f(2, 3)
+```
 """
-macro mag_str(ex::String)
+macro mag_str(ex::String, C::String="")
     chunks = String[]
     kws = []
     while !isempty(ex)
@@ -424,7 +607,14 @@ macro mag_str(ex::String)
             push!(kws, Expr(:kw, k, esc(jex)))
         end
     end
-    :(mageval($(join(chunks)); $(kws...)))
+    r = :(mageval($(join(chunks)); $(kws...)))
+    if C == ""
+        return r
+    elseif Symbol(C) in CALLING_CONVENTIONS
+        return :($(MagmaCallable{Symbol(C)})($r))
+    else
+        error("invalid postfix on `mag\"...\"` macro: $(repr(C))")
+    end
 end
 export @mag_str
 
@@ -469,24 +659,44 @@ maggen(x, n) = magcallf(Symbol("."), x, n)
 export maggen
 
 struct MagmaTypes end
+Base.getproperty(::MagmaTypes, k::Symbol) = MagmaType(k)
+function Base.propertynames(::MagmaTypes)
+    r = Symbol[]
+    interact() do p
+        putcmd(p, "ListTypes()")
+        for line in eachlinetotoken(p, missing)
+            for t in split(strip(line))
+                push!(r, Symbol(t))
+            end
+        end
+        checkerr(p)
+    end
+    r
+end
 const magt = MagmaTypes()
 export magt
-Base.getproperty(::MagmaTypes, k::Symbol) = MagmaType(k)
 
-struct MagmaIntrinsics{N} end
-const magp = MagmaIntrinsics{0}()
-const magf = MagmaIntrinsics{1}()
-const magf2 = MagmaIntrinsics{2}()
-const magf3 = MagmaIntrinsics{3}()
-const magf4 = MagmaIntrinsics{4}()
-const magf5 = MagmaIntrinsics{5}()
-const magf6 = MagmaIntrinsics{6}()
-const magf7 = MagmaIntrinsics{7}()
-const magf8 = MagmaIntrinsics{8}()
-const magg = MagmaIntrinsics{:g}()
-export magp, magf, magf2, magf3, magf4, magf5, magf6, magf7, magf8, magg
-Base.getproperty(::MagmaIntrinsics{N}, k::Symbol) where {N} = MagmaCallable{N}(MagmaIntrinsic(k))
-Base.getproperty(::MagmaIntrinsics{:g}, k::Symbol) = (names, args...; opts...) -> magcallg(names, k, args...; opts...)
+struct MagmaIntrinsics{C} end
+Base.getproperty(::MagmaIntrinsics{C}, k::Symbol) where {C} = MagmaCallable{C}(MagmaIntrinsic(k))
+for C in CALLING_CONVENTIONS
+    j = Symbol(:mag, C)
+    @eval const $j = $(MagmaIntrinsics{C}())
+    @eval export $j
+end
+function Base.propertynames(::MagmaIntrinsics)
+    r = Symbol[]
+    interact() do p
+        putcmd(p, "ListSignatures(Any)")
+        for line in eachlinetotoken(p, missing)
+            m = match(r"^\s*([a-zA-Z0-9_]+)\s*\(", line)
+            if m !== nothing
+                push!(r, Symbol(m.captures[1]))
+            end
+        end
+        checkerr(p)
+    end
+    r
+end
 
 """
     magrecformat(field, ...)
@@ -495,7 +705,8 @@ Create a record format with the given fields.
 
 Each `field` may be a symbol, giving the name, or a `name=>type` pair.
 """
-function magrecformat(_fields...)
+function magrecformat(_fields...; cache=false)
+    cache && return get!(()->magrecformat(_fields...; cache=false), MAGRECFORMAT_CACHE, _fields)
     r = MagmaObject()
     fields = map(_fields) do f
         if f isa Symbol
@@ -514,6 +725,7 @@ function magrecformat(_fields...)
     end
     r
 end
+const MAGRECFORMAT_CACHE = Dict{Any,MagmaObject}()
 export magrecformat
 
 """
@@ -535,36 +747,57 @@ end
 export magrec
 
 """
-    maggetfield(x, k)
+    maggetattr(x, k)
 
-Get field `k` from `x`, equivalent to ```x`k```.
+Get attribute `k` from `x`, equivalent to ```x`k```.
 """
-function maggetfield(_x, _k)
+function maggetattr(_x, _k)
     x = MagmaValue(_x)
     k = MagmaValue(_k isa Symbol ? string(_k) : _k)
     r = MagmaObject()
-    interact() do p
+    GC.@preserve x k interact() do p
         putcmd(p, varname(r), " := ", valstr(x), "``", valstr(k))
         echototoken(p, missing)
         checkerr(p)
     end
     r
 end
-export maggetfield
+export maggetattr
 
 """
-    magsetfield!(x, k, v)
+    magsetattr!(x, k, v)
 
-Set field `k` of `x` to `v`, equivalent to ```x`k := v```.
+Set attribute `k` of `x` to `v`, equivalent to ```x`k := v```.
 """
-function magsetfield!(x::MagmaObject, _k, _v)
+function magsetattr!(x::MagmaObject, _k, _v)
     k = MagmaValue(_k isa Symbol ? string(_k) : _k)
     v = MagmaValue(_v)
-    interact() do p
+    GC.@preserve x k v interact() do p
         putcmd(p, valstr(x), "``", valstr(k), " := ", valstr(v))
         echototoken(p, missing)
         checkerr(p)
     end
     x
 end
-export magsetfield!
+export magsetattr!
+
+"""
+    magattrnames(x)
+
+The attribute names of x.
+"""
+function magattrnames(_x)
+    x = MagmaValue(_x)
+    r = Symbol[]
+    GC.@preserve x interact() do p
+        putcmd(p, "__jl_ListFields(", valstr(x), ")")
+        for line in eachlinetotoken(p, missing)
+            for x in split(strip(line))
+                push!(r, Symbol(x))
+            end
+        end
+        checkerr(p)
+    end
+    sort!(r)
+    unique!(r)
+end

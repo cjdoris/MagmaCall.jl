@@ -1,4 +1,34 @@
 """
+    magliteralstr(x)
+
+A string which evaluates to `x` in Magma.
+"""
+magliteralstr(x::Bool) = x ? "true" : "false"
+magliteralstr(x::Union{Int8,Int16,Int32,Int64,Int128,UInt8,UInt16,UInt32,UInt64,UInt128,BigInt}) = string(x)
+magliteralstr(x::Integer) = magliteralstr(convert(BigInt, x))
+magliteralstr(x::Rational) = string("(", magliteralstr(numerator(x)), "/", magliteralstr(denominator(x)), ")")
+magliteralstr(x::Union{Float16,Float32,Float64,BigFloat}) =
+    if isinf(x)
+        signbit(x) ? "(-Infinity())" : "Infinity()"
+    elseif isnan(x)
+        error("cannot represent NaN as a Magma value")
+    else
+        "(RealField($(precision(x)):Bits) ! $(x)p$(ceil(Int, precision(x)*log10(2)+1)))"
+    end
+magliteralstr(x::Complex{T}) where {T<:Union{Float16,Float32,Float64,BigFloat}} =
+    if isinf(x) || isnan(x)
+        error("cannot represent complex infinity or NaN as a Magma value")
+    else
+        "elt<ComplexField($(precision(T)):Bits) | $(real(x))p$(ceil(Int, precision(T)*log10(2)+1)), $(imag(x))p$(ceil(Int, precision(T)*log10(2)+1))>"
+    end
+magliteralstr(x::AbstractRange{<:Integer}) = "[$(magliteralstr(first(x)))..$(magliteralstr(last(x))) by $(magliteralstr(step(x)))]"
+magliteralstr(x::Union{String,SubString{String}}) = all(isascii, x) ? repr(x) : error("magma only supports ASCII strings")
+magliteralstr(x::AbstractString) = magliteralstr(convert(String, x))
+magliteralstr(x::AbstractChar) = magliteralstr(string(x))
+
+const MagmaLiteral = Union{Integer, Rational, Float16, Float32, Float64, BigFloat, Complex{Float16}, Complex{Float32}, Complex{Float64}, Complex{BigFloat}, AbstractRange{<:Integer}, AbstractString, AbstractChar}
+
+"""
     MagmaValue <: Any
     MagmaValue(x)
 
@@ -10,16 +40,11 @@ Overload `MagmaValue(x)` to provide conversions from Julia values to Magma ones.
 """
 abstract type MagmaValue end
 MagmaValue(x::MagmaValue) = x
-MagmaValue(x::Bool) = MagmaExpr(x ? "true" : "false")
-MagmaValue(x::Union{Int8,Int16,Int32,Int64,Int128,UInt8,UInt16,UInt32,UInt64,UInt128,BigInt}) = MagmaExpr(string(x))
-MagmaValue(x::Integer) = MagmaValue(convert(BigInt, x))
-MagmaValue(x::AbstractUnitRange{<:Integer}) = MagmaExpr("[$(valstr(MagmaValue(first(x))))..$(valstr(MagmaValue(last(x))))]")
-MagmaValue(x::AbstractRange{<:Integer}) = MagmaExpr("[$(valstr(MagmaValue(first(x))))..$(valstr(MagmaValue(last(x)))) by $(valstr(MagmaValue(step(x))))]")
-MagmaValue(x::Union{String,SubString{String}}) = all(isascii, x) ? MagmaExpr(repr(x)) : error("magma only supports ASCII strings")
-MagmaValue(x::AbstractString) = MagmaValue(convert(String, x))
 MagmaValue(x::AbstractVector) = magseq(x)
 MagmaValue(x::AbstractSet) = magset(x)
 MagmaValue(x::Tuple) = magtuple(x)
+MagmaValue(x::NamedTuple) = magrec(magrecformat(keys(x)...; cache=true); x...)
+MagmaValue(x::MagmaLiteral) = MagmaExpr(magliteralstr(x))
 export MagmaValue
 
 argstr(o::MagmaValue) = valstr(o)
@@ -129,20 +154,21 @@ typearg(x) = MagmaValue(x)
 typearg(x::Union{Symbol,Tuple{Symbol,Vararg}}) = MagmaType(x)
 
 """
-    MagmaCallable{N} <: MagmaValue
-    MagmaCallable{N}(o)
+    MagmaCallable{C} <: MagmaValue
+    MagmaCallable{C}(o)
 
-Wrap the value `o`, declaring it to be callable with `N` return values.
+Wrap the value `o`, declaring it to be callable with calling convention `C` (see [`magcall`](@ref)).
 
-The resulting object can use the usual function call syntax, instead of `magmacall`.
+The resulting object can use the usual function call syntax, instead of `magcall`.
 """
-struct MagmaCallable{N,T<:MagmaValue} <: MagmaValue
+struct MagmaCallable{C, T<:MagmaValue} <: MagmaValue
     o :: T
 end
-MagmaCallable{N}(o::MagmaValue) where {N} = MagmaCallable{N,typeof(o)}(o)
-MagmaCallable{N}(o::MagmaCallable) where {N} = MagmaCallable{N}(getfield(o, :o))
+MagmaCallable{C}(o::MagmaValue) where {C} = MagmaCallable{C, typeof(o)}(o)
+MagmaCallable{C}(o::MagmaCallable) where {C} = MagmaCallable{C}(getfield(o, :o))
 export MagmaCallable
+
 valstr(x::MagmaCallable) = valstr(getfield(x, :o))
 argstr(x::MagmaCallable) = argstr(getfield(x, :o))
 MagmaObject(o::MagmaCallable) = MagmaObject(getfield(o, :o))
-(f::MagmaCallable{N})(args...; opts...) where {N} = magcall(Val(N), getfield(f,:o), args...; opts...)
+(f::MagmaCallable{C})(args...; opts...) where {C} = magcall(Val(C), getfield(f,:o), args...; opts...)

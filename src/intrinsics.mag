@@ -12,3 +12,69 @@ intrinsic __jl_display(x::Intrinsic)
     {"}
     x:Magma;
 end intrinsic;
+
+intrinsic __jl_indexable(xs) -> .
+    {Convert 'xs' to a container that can be indexed into.}
+    return [* x : x in xs *];
+end intrinsic;
+
+intrinsic __jl_indexable(xs::List) -> .
+    {"}
+    return xs;
+end intrinsic;
+
+intrinsic __jl_indexable(xs::SeqEnum) -> .
+    {"}
+    return xs;
+end intrinsic;
+
+intrinsic __jl_indexable(xs::SetIndx) -> .
+    {"}
+    return xs;
+end intrinsic;
+
+intrinsic __jl_indexable(xs::MonStgElt) -> .
+    {"}
+    return xs;
+end intrinsic;
+
+intrinsic __jl_IsDefined(xs, i) -> .
+    {Same as 'IsDefined(xs, i)' but defined for more inputs.}
+    return IsDefined(xs, i);
+end intrinsic;
+
+intrinsic __jl_IsDefined(xs::SetIndx, i::RngIntElt) -> .
+    {"}
+    return (1 le i) and (i le #xs);
+end intrinsic;
+
+intrinsic __jl_IsDefined(xs::SetIndx, i::RngIntElt) -> .
+    {"}
+    return (1 le i) and (i le #xs);
+end intrinsic;
+
+intrinsic __jl_ListFields(x)
+    {List the fields of x.}
+    ListAttributes(Type(x));
+end intrinsic;
+
+intrinsic __jl_ListFields(x::Rec)
+    {"}
+    for n in Names(x) do
+        print n;
+    end for;
+end intrinsic;
+
+intrinsic __jl_showerror(e::Err)
+    {Show the given error, Julia-style.}
+    print e`Object;
+    t := StripWhiteSpace(e`Traceback);
+    if #t gt 0 then
+        print t;
+    end if;
+end intrinsic;
+
+intrinsic __jl_showerror(e)
+    {"}
+    print "Unknown error";
+end intrinsic;
