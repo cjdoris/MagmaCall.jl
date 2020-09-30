@@ -801,3 +801,4 @@ function magattrnames(_x)
     sort!(r)
     unique!(r)
 end
+export magattrnames
