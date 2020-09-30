@@ -117,6 +117,7 @@ The simplest way to call an intrinsic function is to use the syntax `magf.Intrin
 For each "calling convention" `C` in the following table, there is a corresponding `magC` object which can be accessed in this way.
 
 | Convention | Interpretation |
+| :--------- | :------------- |
 | p | Procedure call. Return `nothing`. |
 | f | Function call. Return a `MagmaObject`. |
 | fN | Function call with `N` return values. Return a tuple of `MagmaObject`. |
@@ -130,7 +131,7 @@ The way this works is that `magC.Intrinsic` is a `MagmaCallable{:C}`, which is a
 
 If you have a Magma value `f` and need to call it, then `f(...)` will not work because the desired calling convention is unknown. Instead, use `magcall(Val(:C), f, ...)` or `magcallC(f, ...)`. Alternatively, you can explicitly wrap it as `MagmaCallable{:C}(f)` and call that.
 
-Note also that the `mag"..."C` is equivalent to `MagmaCallable{:C}(mag"...")`.
+Note also that `mag"..."C` is equivalent to `MagmaCallable{:C}(mag"...")`.
 
 The following are equivalent:
 ```julia

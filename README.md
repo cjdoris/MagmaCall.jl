@@ -49,6 +49,6 @@ You need to have Magma already installed, with the `magma` executable in your `P
 
 ## Caveat
 
-This package is SLOW, each operation takes around 1ms. Hence this package is most suitable for interactive use and a high-level control.
+This package is SLOW, each operation takes around 1ms. Hence this package is most suitable for interactive use and high-level control.
 
 If you need to write any tight loops, write the whole loop in Magma. Instead of `magseq(magf.GF(p) for p in magf.PrimesUpTo(N))` do `mag"[GF(p) : p in PrimesUpTo($N)]"` (which is 100 times faster).
