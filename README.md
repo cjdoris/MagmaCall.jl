@@ -1,5 +1,7 @@
 # MagmaCall.jl
 
+[![][docs-dev-img]][docs-dev-url]
+
 `MagmaCall.jl` makes it easy to call the [Magma computer algebra system](http://magma.maths.usyd.edu.au/magma/) from Julia.
 
 ## Example
@@ -52,3 +54,6 @@ You need to have Magma already installed, with the `magma` executable in your `P
 This package is SLOW, each operation takes around 1ms. Hence this package is most suitable for interactive use and high-level control.
 
 If you need to write any tight loops, write the whole loop in Magma. Instead of `magseq(magf.GF(p) for p in magf.PrimesUpTo(N))` do `mag"[GF(p) : p in PrimesUpTo($N)]"` (which is 100 times faster).
+
+[docs-dev-img]: https://img.shields.io/badge/docs-dev-blue.svg
+[docs-dev-url]: https://cjdoris.github.io/MagmaCall.jl/dev
