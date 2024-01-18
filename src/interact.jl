@@ -8,6 +8,7 @@ const COLUMNS = Ref(-1)
 const STDOUT = Ref{IO}()
 
 function __init__()
+    ccall(:jl_generating_output, Cint, ()) == 1 && return nothing
     PROC[] = open(`$EXE -b`, "r+")
     RUNNING[] = true
     STDOUT[] = stdout
